@@ -11,8 +11,22 @@ This project serves as a helper for tokenizing text efficiently for another proj
 
 The goal is to maximize the resources available, as pretraning these exact models are virtually impossible on consumer grade hardware.
 
+# Building the tokenizer
+Make sure you create a virtualenv using:
+```sh
+$ python -m virtualenv venv
+$ source venv/bin/activate
+```
 
-
+To build the tokenizer you need to have install the requirements using:
+```sh
+$ pip install -r requirements.txt
+```
+Aftewards just run on the root the following:
+```sh
+$ maturin develop
+```
+Now the tokenizer module will be installed on your venv and ready to be used. Run the example notebook to test it.
 ## Features
 
 - Python & Rust Integration: Combines the simplicity of Python with the speed and safety of Rust.
@@ -29,6 +43,7 @@ The goal is to maximize the resources available, as pretraning these exact model
 
 - Profile and find where the code takes the longest time and resources.
 - Find optimizations with datatypes, e.g replacing HashMap with FxHashMap.
+- Explore SIMD acceleration.
 - Evaluate and compare the speedup with the following:
     - Python vs Rust Implementation
     - Sequential vs Parallel
