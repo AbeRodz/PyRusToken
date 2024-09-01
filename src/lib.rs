@@ -2,6 +2,7 @@
 
 use regex::Regex;
 use rayon::prelude::*;
+use std::sync::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rustc_hash::FxHashMap as HashMap;
@@ -15,18 +16,6 @@ fn get_vocab(corpus: Vec<String>) -> HashMap<String,usize>{
     vocab
 }
 
-// fn generate_vocab(merges: &HashMap<(u8, u8), usize>) -> HashMap<usize, Vec<u8>> {
-//     let mut vocab: HashMap<u8, Vec<u8>> = (0..256).map(|idx| (idx, vec![idx as u8])).collect();
-
-//     for ((p0, p1), idx) in merges {
-//         let p0_bytes = vocab.get(p0).unwrap().clone();
-//         let p1_bytes = vocab.get(p1).unwrap().clone();
-//         let merged_bytes = [p0_bytes, p1_bytes].concat();
-//         vocab.insert(*idx as u8, merged_bytes);
-//     }
-
-//     vocab
-// }
 
 fn get_stats(vocab: &mut HashMap<String, usize>) -> HashMap<(String,String), usize>{
     let mut pairs = HashMap::default();
@@ -42,18 +31,19 @@ fn get_stats(vocab: &mut HashMap<String, usize>) -> HashMap<(String,String), usi
 pairs
 }
 
-fn get_stats_ids(ids: &[u8]) -> HashMap<(u8, u8), usize>{
-    let mut counts = HashMap::default();
-    for pair in ids.windows(2){
-        //let key = (pair[0], pair[1]);
-        *counts.entry((pair[0], pair[1])).or_insert(0) +=1;
-    }
-    
+fn get_stats_ids(ids: &Vec<u8>) -> HashMap<(u8, u8), usize>{
+    let  counts = Mutex::new(HashMap::default());
+    ids.par_windows(2).for_each(|pair| {
+        let mut counts = counts.lock().unwrap();
+        *counts.entry((pair[0], pair[1])).or_insert(0) += 1;
+    });
+
+    let counts = counts.into_inner().unwrap();
     counts
+    
 }
 
 fn merge(ids: Vec<u8>, pair: (u8, u8), idx :usize ) -> Vec<u8>{
-    //let mut new_ids = Vec::new();
     let mut new_ids = Vec::with_capacity(ids.len());
 
    let mut i = 0;
@@ -99,21 +89,18 @@ impl  BPE {
             merges: HashMap::default(),
         }
     }
-    fn parallel_word_tokenizer(&self, raw_corpus: &str)->  Vec<String>{
+    fn parallel_word_tokenizer(&self, raw_corpus: &str)->  Vec<u8>{
 
         let re: Regex = Regex::new(r"(\b\w+\b|\s+)").unwrap();
-     
+        
 
-        let tokens: Vec<Vec<String>> = raw_corpus.par_split_whitespace()
+        let tokens: Vec<u8> = raw_corpus.par_split_inclusive('\n')
         .map(|chunk| {
             re.find_iter(chunk)
-                .map(|m| m.as_str().to_string())
-                .collect()
+                .flat_map(|m| m.as_str().bytes())
         })
-        .collect();
-
-
-    tokens.into_iter().flatten().collect()
+        .flatten_iter().collect();
+    tokens
     }
 
 
@@ -166,7 +153,6 @@ impl  BPE {
 
     fn learn(&mut self,corpus: Vec<String>, epochs: usize,py : Python)-> PyResult<Py<PyDict>>{
         let mut vocab = get_vocab(corpus);
-        // mut new_vocab : PyResult<()>; 
         for _ in 0..epochs{
         let pairs = get_stats(&mut vocab);
         self.vocab = vocab.clone();
@@ -175,17 +161,14 @@ impl  BPE {
             merge_vocab(max, &mut vocab);
           } 
         }
-        //self.vocab = vocab.clone();
         return  self.convert_to_pydict(vocab, py);
     }
 
 
     fn learn_ids(&mut self,raw_corpus: &str, epochs: usize){
         
-        // mut new_vocab : PyResult<()>; 
-        let text_tokens = self.parallel_word_tokenizer(raw_corpus);
-        let mut ids = self.str2token(text_tokens);
-        //let mut vocab = generate_vocab(raw_corpus);
+        let mut ids = self.parallel_word_tokenizer(raw_corpus);
+
         let mut merges = HashMap::default();
         let mut vocab = HashMap::default();
 
@@ -197,13 +180,7 @@ impl  BPE {
 
          for i in 0..epochs{
          let pairs = get_stats_ids(&ids);
-        // if let Some((&pair, _)) = pairs.iter().max_by_key(|&(_, &count)| count) {
-        //     let idx = 256 + i;
-        //     ids = merge(ids, pair, idx);
-        //     merges.insert(pair, idx);
-        //     let merged_bytes = [&vocab[&pair.0], &vocab[&pair.1]].concat();
-        //     vocab.insert(idx as u8, merged_bytes);
-        // }
+
          if let Some(pair)= pairs.keys().max_by_key(|p| pairs.get(p)){
              let idx  = 256 + i;
              ids = merge(ids, *pair,idx);
@@ -224,7 +201,6 @@ impl  BPE {
     fn encode(&mut self ,raw_corpus: String) -> Vec<u8> {
         let text_tokens = self.word_tokenizer(raw_corpus);
         let mut tokens = self.str2token(text_tokens);
-        //let mut merges: HashMap<(u8, u8), usize> = HashMap::new();
         while tokens.len() >= 2{
             let stats = get_stats_ids(&tokens);
             if let Some(pair) = stats.keys().min_by_key(|p| self.merges.get(p)) {
@@ -238,7 +214,6 @@ impl  BPE {
     tokens
     }
      fn decode(&self, ids: Vec<u8>) -> String {
-         //let vocab = generate_vocab(merges);
         
          let tokens: Vec<u8> = ids.iter().map(|&idx| self.vocab_num[&idx].as_slice()).flatten().cloned().collect();
 
